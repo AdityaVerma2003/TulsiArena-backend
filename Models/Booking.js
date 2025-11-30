@@ -9,20 +9,20 @@ const bookingSchema = new mongoose.Schema({
   facilityName: {
     type: String,
     required: [true, 'Facility name is required'],
-    enum: ['Turf', 'Turf + Swimming Pool']
+    enum: ['Turf', 'Turf+Swimming Pool' , 'Swimming Pool']
   },
   facilityType: {
     type: String,
-    enum: ['turf', 'combo'],
+    enum: ['turf', 'combo' , 'pool'],
     required: true
   },
   date: {
     type: Date,
     required: [true, 'Booking date is required']
   },
-  timeSlot: {
-    type: String,
-    required: [true, 'Time slot is required']
+  timeSlots: {
+    type: [String],
+    required: [true, 'Time slots are required']
   },
   additionalPlayers: {
     type: Number,
@@ -58,7 +58,8 @@ const bookingSchema = new mongoose.Schema({
 
 // Index for faster queries
 bookingSchema.index({ user: 1, date: 1 });
-bookingSchema.index({ facilityName: 1, date: 1, timeSlot: 1 });
+// IMPORTANT: The single slot index is replaced by an array check in the controller
+bookingSchema.index({ facilityName: 1, date: 1 }); // Still useful for general queries
 
 const Booking = mongoose.model('Booking', bookingSchema);
 export default Booking;

@@ -5,34 +5,48 @@ import Booking from "../Models/Booking.js";
 // @access  Private
 const createBooking = async (req, res) => {
   try {
-    const { facilityName, facilityType, date, timeSlot, additionalPlayers, basePrice } = req.body;
+    const { facilityName, facilityType, date, timeSlots, additionalPlayers, basePrice } = req.body;
 
     // Validate input
-    if (!facilityName || !date || !timeSlot || !basePrice) {
+    if (!facilityName || !date || !timeSlots || timeSlots.length === 0 || !basePrice) {
       return res.status(400).json({
         success: false,
-        message: 'Please provide all required fields'
+        message: 'Please provide all required fields, including at least one time slot.'
       });
     }
 
-    // Check if slot is already booked
-    const existingBooking = await Booking.findOne({
+    // --- Slot Conflict Check ---
+    
+    // Find any existing bookings (that are not cancelled) on the same facility and date
+    const existingBookings = await Booking.find({
       facilityName,
       date: new Date(date),
-      timeSlot,
       status: { $nin: ['Cancelled'] }
-    });
+    }).select('timeSlots');
 
-    if (existingBooking) {
+    // Extract all previously booked slots for this facility/date
+    const bookedSlots = existingBookings.flatMap(booking => booking.timeSlots);
+    
+    // Check for overlap between requested slots and already booked slots
+    const conflictSlots = timeSlots.filter(slot => bookedSlots.includes(slot));
+
+    if (conflictSlots.length > 0) {
       return res.status(400).json({
         success: false,
-        message: 'This time slot is already booked'
+        message: `The following time slot(s) are already booked: ${conflictSlots.join(', ')}`,
       });
     }
 
-    // Calculate prices
-    const additionalPlayersCost = (additionalPlayers || 0) * 100;
-    const totalPrice = parseInt(basePrice) + parseInt(additionalPlayersCost);
+    // --- Price Calculation ---
+    
+    // Assuming basePrice provided in req.body is the cost PER SLOT
+    const totalBasePrice = parseInt(basePrice) * timeSlots.length;
+    
+    // Additional player cost is still per booking, not per slot
+    // Assuming additionalPlayers cost is 100 per player per booking (not per slot)
+    const additionalPlayersCost = (additionalPlayers || 0) * 100; 
+    
+    const totalPrice = totalBasePrice + additionalPlayersCost;
 
     // Create booking
     const booking = await Booking.create({
@@ -40,9 +54,9 @@ const createBooking = async (req, res) => {
       facilityName,
       facilityType: facilityType || 'turf',
       date: new Date(date),
-      timeSlot,
+      timeSlots, // Use the array
       additionalPlayers: additionalPlayers || 0,
-      basePrice,
+      basePrice: totalBasePrice, // Store the calculated total base price
       additionalPlayersCost,
       totalPrice,
       status: 'Confirmed',
@@ -51,7 +65,7 @@ const createBooking = async (req, res) => {
 
     res.status(201).json({
       success: true,
-      message: 'Booking created successfully',
+      message: `Booking for ${timeSlots.length} slot(s) created successfully`,
       booking
     });
   } catch (error) {
@@ -62,6 +76,8 @@ const createBooking = async (req, res) => {
     });
   }
 };
+
+// ... (get and cancel functions remain mostly the same, as they don't modify structure)
 
 // @desc    Get all user bookings
 // @route   GET /api/bookings/my-bookings

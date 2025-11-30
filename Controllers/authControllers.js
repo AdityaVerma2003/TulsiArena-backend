@@ -22,10 +22,6 @@ const register = async (req, res) => {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     // Simple Mobile Number Regex (e.g., 10 digits, adjust as per country/region)
     const mobileRegex = /^\d{10}$/; 
-    // Password Regex (e.g., minimum 8 chars, 1 uppercase, 1 lowercase, 1 number, 1 special char)
-    // NOTE: For security, we usually hash the password; the complexity check is for user input quality.
-    const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/;
-
 
     // **Name Validation**
     if (!name || name.trim().length < 2) {
@@ -52,7 +48,7 @@ const register = async (req, res) => {
     }
 
     // **Password Validation**
-    if (!password || !passwordRegex.test(password)) {
+    if (!password) {
       return res.status(400).json({
         success: false,
         message: 'Password must be at least 8 characters long and include at least one uppercase letter, one lowercase letter, one number, and one special character (@$!%*?&)'
