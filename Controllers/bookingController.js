@@ -183,4 +183,42 @@ const cancelBooking = async (req, res) => {
   }
 };
 
-export {cancelBooking , createBooking , getBooking , getMyBookings}
+
+const getAllBookingsByDate = async (req, res) => {
+  try {
+    const { date } = req.query;
+
+    if (!date) {
+      return res.status(400).json({ success: false, message: 'Date parameter is required.' });
+    }
+
+    // Convert date string to Date objects for querying the date field
+    // Mongoose date queries require start and end range for exact day matching
+    const startOfDay = new Date(date);
+    startOfDay.setUTCHours(0, 0, 0, 0); 
+    const endOfDay = new Date(date);
+    endOfDay.setUTCHours(23, 59, 59, 999);
+
+    // Fetch all bookings for the specified date that are not cancelled
+    const bookings = await Booking.find({
+      date: { $gte: startOfDay, $lte: endOfDay },
+      status: { $nin: ['Cancelled'] },
+      // Optional: Filter only facility types that use the common time slots
+      facilityType: { $in: ['turf', 'combo', 'pool'] } 
+    }).select('timeSlots facilityType');
+
+    res.status(200).json({
+      success: true,
+      count: bookings.length,
+      bookings
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch bookings by date',
+      error: error.message
+    });
+  }
+};
+
+export {cancelBooking , createBooking , getBooking , getMyBookings , getAllBookingsByDate}

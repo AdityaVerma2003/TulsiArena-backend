@@ -1,6 +1,8 @@
+import { OAuth2Client } from "google-auth-library";
 import User from "../Models/User.js"
 import jwt from "jsonwebtoken"
 import {sendRegistrationEmail} from "../Utils/emailService.js";
+const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 // Generate JWT Token
 const generateToken = (id) => {
@@ -15,6 +17,7 @@ const generateToken = (id) => {
 const register = async (req, res) => {
   try {
     const { name, email, mobile, password } = req.body;
+    console.log("register controller")
 
     // --- 1. Robust Input Validation ---
 
@@ -47,15 +50,6 @@ const register = async (req, res) => {
       });
     }
 
-    // **Password Validation**
-    if (!password) {
-      return res.status(400).json({
-        success: false,
-        message: 'Password must be at least 8 characters long and include at least one uppercase letter, one lowercase letter, one number, and one special character (@$!%*?&)'
-      });
-    }
-
-
     // --- 2. Check for existing users (Data Integrity) ---
 
     // Check if user already exists with this email
@@ -66,6 +60,7 @@ const register = async (req, res) => {
         message: 'User already exists with this email'
       });
     }
+    console.log("user does not exits")
 
     // Check if user already exists with this mobile
     const mobileExists = await User.findOne({ mobile });
@@ -75,6 +70,7 @@ const register = async (req, res) => {
         message: 'User already exists with this mobile number'
       });
     }
+    console.log("mobile does not exisits")
 
     
     // Create user
@@ -85,14 +81,16 @@ const register = async (req, res) => {
       password 
     })
 
-    await user.save();
+    const savedUser = await user.save();
     // Send registration email
-    await sendRegistrationEmail(email, name);
+    console.log("after saving user" , savedUser)
+    // await sendRegistrationEmail(email, name);
 
     // Generate token (assuming generateToken function is defined elsewhere)
     const token = generateToken(user._id);
+    console.log("token generate" , token)
 
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
       message: 'User registered successfully',
       token,
@@ -106,7 +104,7 @@ const register = async (req, res) => {
     });
   } catch (error) {
     // This is a catch-all for database errors or other unexpected issues
-    res.status(500).json({ // Changed to 500 for server errors
+    return res.status(500).json({ 
       success: false,
       message: 'Registration failed due to a server error',
       error: error.message
@@ -213,6 +211,67 @@ const logout = async (req, res) => {
   });
 };
 
+const googleRegister = async (req, res) => {
+ try {
+    const { token } = req.body;
+
+    // Verify Google token
+    const ticket = await client.verifyIdToken({
+      idToken: token,
+      audience: process.env.GOOGLE_CLIENT_ID,
+    });
+
+    const payload = ticket.getPayload();
+    const { sub: googleId, email, name, picture } = payload;
+
+    // Check if user already exists
+    let user = await User.findOne({ email });
+
+    if (user) {
+      // User exists - update googleId if not set
+      if (!user.googleId) {
+        user.googleId = googleId;
+        user.profilePicture = picture;
+        await user.save();
+      }
+    } else {
+      // Create new user with Google OAuth
+      user = await User.create({
+        name,
+        email,
+        googleId,
+        profilePicture: picture,
+        // No password or mobile needed for Google users
+      });
+    }
+
+    // Generate JWT token
+    const jwtToken = jwt.sign(
+      { id: user._id, email: user.email, role: user.role },
+      process.env.JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    res.status(200).json({
+      success: true,
+      token: jwtToken,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        profilePicture: user.profilePicture,
+      },
+    });
+  } catch (error) {
+    console.error('Google login error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Google authentication failed',
+    });
+  }
+};
+
 
 // @desc    Get current user profile
 // @route   GET /api/auth/me
@@ -240,4 +299,4 @@ const getMe = async (req, res) => {
   }
 };
 
-export {login , register , getMe , logout};
+export {login , register , getMe , logout , googleRegister};

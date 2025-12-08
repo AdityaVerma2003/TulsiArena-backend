@@ -9,7 +9,7 @@ const bookingSchema = new mongoose.Schema({
   facilityName: {
     type: String,
     required: [true, 'Facility name is required'],
-    enum: ['Turf', 'Turf+Swimming Pool' , 'Swimming Pool']
+    enum: ['Turf', 'Turf + Swimming Pool' , 'Swimming Pool']
   },
   facilityType: {
     type: String,

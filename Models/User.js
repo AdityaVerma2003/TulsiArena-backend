@@ -20,9 +20,14 @@ const userSchema = new mongoose.Schema({
   },
   mobile: {
     type: String,
-    required: [true, 'Mobile number is required'],
+    required: function() {
+      // Mobile is only required if user doesn't have googleId
+      return !this.googleId;
+    },
     validate: {
       validator: function(v) {
+        // Only validate if mobile exists
+        if (!v) return true;
         return /^[6-9]\d{9}$/.test(v);
       },
       message: 'Please provide a valid 10-digit Indian mobile number'
@@ -30,9 +35,19 @@ const userSchema = new mongoose.Schema({
   },
   password: {
     type: String,
-    required: [true, 'Password is required'],
-    minlength: [8, 'Password must be at least 8 characters'],
+    required: function() {
+      // Password is only required if user doesn't have googleId
+      return !this.googleId;
+    },
     select: false // Don't return password in queries by default
+  },
+  googleId: {
+    type: String,
+    unique: true,
+    sparse: true // Allows multiple null values but unique non-null values
+  },
+  profilePicture: {
+    type: String, // Store Google profile picture URL
   },
   role: {
     type: String,
@@ -47,22 +62,26 @@ const userSchema = new mongoose.Schema({
   timestamps: true
 });
 
-// Hash password before saving
+// Hash password before saving (only if password exists)
 userSchema.pre('save', async function() {
-  if (!this.isModified('password')) {
-    return ;
+  // Only hash if password is modified and exists
+  if (!this.isModified('password') || !this.password) {
+    return;
   }
   
   try {
     const salt = await bcrypt.genSalt(10);
     this.password = await bcrypt.hash(this.password, salt);
   } catch (error) {
-    return error;
+    throw error;
   }
 });
 
 // Method to compare passwords
 userSchema.methods.comparePassword = async function(candidatePassword) {
+  if (!this.password) {
+    throw new Error('User does not have a password (OAuth user)');
+  }
   return await bcrypt.compare(candidatePassword, this.password);
 };
 
