@@ -27,8 +27,8 @@ const bookingSchema = new mongoose.Schema({
   additionalPlayers: {
     type: Number,
     default: 0,
-    min: 0,
-    max: 4
+    min: 1,
+    max: 20
   },
   basePrice: {
     type: Number,

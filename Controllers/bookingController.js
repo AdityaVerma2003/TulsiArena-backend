@@ -48,6 +48,18 @@ const createBooking = async (req, res) => {
     
     const totalPrice = totalBasePrice + additionalPlayersCost;
 
+    console.log("booking request received with data:", {
+      facilityName,
+      facilityType,
+      date,
+      timeSlots,
+      additionalPlayers,
+      basePrice,
+      totalBasePrice,
+      additionalPlayersCost,
+      totalPrice
+    });
+
     // Create booking
     const booking = await Booking.create({
       user: req.user.id,
