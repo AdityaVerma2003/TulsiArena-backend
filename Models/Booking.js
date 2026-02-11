@@ -9,11 +9,11 @@ const bookingSchema = new mongoose.Schema({
   facilityName: {
     type: String,
     required: [true, 'Facility name is required'],
-    enum: ['Turf', 'Turf + Swimming Pool' , 'Swimming Pool']
+    enum: ['Turf', 'Turf + Swimming Pool', 'Swimming Pool']
   },
   facilityType: {
     type: String,
-    enum: ['turf', 'combo' , 'pool'],
+    enum: ['turf', 'combo', 'pool'],
     required: true
   },
   date: {
@@ -27,8 +27,24 @@ const bookingSchema = new mongoose.Schema({
   additionalPlayers: {
     type: Number,
     default: 0,
-    min: 1,
-    max: 20
+    min: [0, 'Additional players cannot be negative'],
+    max: [25, 'Maximum 25 persons allowed'], // 🚀 UPDATED: Max 25 for pool
+    validate: {
+      validator: function(value) {
+        // For pool bookings, at least 1 person is required
+        if (this.facilityType === 'pool') {
+          return value >= 1 && value <= 25;
+        }
+        // For turf and combo, max 4 additional players
+        return value >= 0 && value <= 4;
+      },
+      message: props => {
+        if (props.instance.facilityType === 'pool') {
+          return 'Pool bookings require 1-25 persons';
+        }
+        return 'Additional players must be between 0-4 for turf/combo bookings';
+      }
+    }
   },
   basePrice: {
     type: Number,
@@ -58,8 +74,9 @@ const bookingSchema = new mongoose.Schema({
 
 // Index for faster queries
 bookingSchema.index({ user: 1, date: 1 });
-// IMPORTANT: The single slot index is replaced by an array check in the controller
-bookingSchema.index({ facilityName: 1, date: 1 }); // Still useful for general queries
+bookingSchema.index({ facilityName: 1, date: 1 });
+// 🚀 NEW: Index for pool capacity queries
+bookingSchema.index({ facilityType: 1, date: 1, timeSlots: 1 });
 
 const Booking = mongoose.model('Booking', bookingSchema);
 export default Booking;

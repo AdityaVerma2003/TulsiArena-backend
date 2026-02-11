@@ -15,38 +15,106 @@ const createBooking = async (req, res) => {
       });
     }
 
-    // --- Slot Conflict Check ---
+    // 🚀 POOL-SPECIFIC VALIDATIONS
+    const MAX_POOL_CAPACITY = 25;
     
-    // Find any existing bookings (that are not cancelled) on the same facility and date
-    const existingBookings = await Booking.find({
-      facilityName,
-      date: new Date(date),
-      status: { $nin: ['Cancelled'] }
-    }).select('timeSlots');
+    if (facilityType === 'pool') {
+      // Validate person count for pool bookings
+      if (!additionalPlayers || additionalPlayers < 1) {
+        return res.status(400).json({
+          success: false,
+          message: 'Pool bookings require at least 1 person.'
+        });
+      }
 
-    // Extract all previously booked slots for this facility/date
-    const bookedSlots = existingBookings.flatMap(booking => booking.timeSlots);
-    
-    // Check for overlap between requested slots and already booked slots
-    const conflictSlots = timeSlots.filter(slot => bookedSlots.includes(slot));
+      if (additionalPlayers > MAX_POOL_CAPACITY) {
+        return res.status(400).json({
+          success: false,
+          message: `Maximum ${MAX_POOL_CAPACITY} persons allowed per pool booking.`
+        });
+      }
 
-    if (conflictSlots.length > 0) {
-      return res.status(400).json({
-        success: false,
-        message: `The following time slot(s) are already booked: ${conflictSlots.join(', ')}`,
-      });
+      // Check if booking time is before 9 PM for today's bookings
+      const bookingDate = new Date(date);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      bookingDate.setHours(0, 0, 0, 0);
+
+      const isToday = bookingDate.getTime() === today.getTime();
+      
+      if (isToday) {
+        const currentHour = new Date().getHours();
+        if (currentHour >= 21) { // 9 PM or later
+          return res.status(400).json({
+            success: false,
+            message: 'Pool bookings are closed after 9:00 PM. Please try again tomorrow.'
+          });
+        }
+      }
+
+      // 🚀 Check pool capacity for each slot
+      for (const slot of timeSlots) {
+        // Find all existing pool bookings for this slot on this date (excluding cancelled)
+        const existingPoolBookings = await Booking.find({
+          facilityType: 'pool',
+          date: new Date(date),
+          timeSlots: slot,
+          status: { $nin: ['Cancelled'] }
+        }).select('additionalPlayers');
+
+        // Calculate total persons already booked for this slot
+        const totalBookedPersons = existingPoolBookings.reduce(
+          (sum, booking) => sum + (booking.additionalPlayers || 0),
+          0
+        );
+
+        const availableCapacity = MAX_POOL_CAPACITY - totalBookedPersons;
+
+        // Check if there's enough capacity for this booking
+        if (additionalPlayers > availableCapacity) {
+          return res.status(400).json({
+            success: false,
+            message: `Only ${availableCapacity} spot(s) available for slot: ${slot}. You requested ${additionalPlayers} persons.`
+          });
+        }
+      }
+    }
+
+    // --- Slot Conflict Check for NON-POOL facilities (Turf and Combo) ---
+    if (facilityType !== 'pool') {
+      const existingBookings = await Booking.find({
+        facilityName,
+        date: new Date(date),
+        status: { $nin: ['Cancelled'] }
+      }).select('timeSlots');
+
+      const bookedSlots = existingBookings.flatMap(booking => booking.timeSlots);
+      const conflictSlots = timeSlots.filter(slot => bookedSlots.includes(slot));
+
+      if (conflictSlots.length > 0) {
+        return res.status(400).json({
+          success: false,
+          message: `The following time slot(s) are already booked: ${conflictSlots.join(', ')}`,
+        });
+      }
     }
 
     // --- Price Calculation ---
-    
-    // Assuming basePrice provided in req.body is the cost PER SLOT
-    const totalBasePrice = parseInt(basePrice) * timeSlots.length;
-    
-    // Additional player cost is still per booking, not per slot
-    // Assuming additionalPlayers cost is 100 per player per booking (not per slot)
-    const additionalPlayersCost = (additionalPlayers || 0) * 100; 
-    
-    const totalPrice = totalBasePrice + additionalPlayersCost;
+    let totalPrice;
+    let totalBasePrice;
+    let additionalPlayersCost = 0;
+
+    if (facilityType === 'pool') {
+      // For pool: price is per person
+      totalPrice = parseInt(basePrice) * (additionalPlayers || 1);
+      totalBasePrice = totalPrice;
+      additionalPlayersCost = 0; // Not applicable for pool
+    } else {
+      // For turf and combo: base price per slot + additional player cost
+      totalBasePrice = parseInt(basePrice) * timeSlots.length;
+      additionalPlayersCost = (additionalPlayers || 0) * 100;
+      totalPrice = totalBasePrice + additionalPlayersCost;
+    }
 
     console.log("booking request received with data:", {
       facilityName,
@@ -66,9 +134,9 @@ const createBooking = async (req, res) => {
       facilityName,
       facilityType: facilityType || 'turf',
       date: new Date(date),
-      timeSlots, // Use the array
+      timeSlots,
       additionalPlayers: additionalPlayers || 0,
-      basePrice: totalBasePrice, // Store the calculated total base price
+      basePrice: totalBasePrice,
       additionalPlayersCost,
       totalPrice,
       status: 'Confirmed',
@@ -81,6 +149,7 @@ const createBooking = async (req, res) => {
       booking
     });
   } catch (error) {
+    console.error("Booking creation error:", error);
     res.status(500).json({
       success: false,
       message: 'Failed to create booking',
@@ -88,8 +157,6 @@ const createBooking = async (req, res) => {
     });
   }
 };
-
-// ... (get and cancel functions remain mostly the same, as they don't modify structure)
 
 // @desc    Get all user bookings
 // @route   GET /api/bookings/my-bookings
@@ -195,29 +262,33 @@ const cancelBooking = async (req, res) => {
   }
 };
 
-
+// 🚀 UPDATED: Get all bookings by date with pool capacity info
+// @desc    Get all bookings for a specific date
+// @route   GET /api/bookings/by-date?date=YYYY-MM-DD
+// @access  Private
 const getAllBookingsByDate = async (req, res) => {
   try {
     const { date } = req.query;
 
     if (!date) {
-      return res.status(400).json({ success: false, message: 'Date parameter is required.' });
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Date parameter is required.' 
+      });
     }
 
-    // Convert date string to Date objects for querying the date field
-    // Mongoose date queries require start and end range for exact day matching
+    // Convert date string to Date objects for querying
     const startOfDay = new Date(date);
     startOfDay.setUTCHours(0, 0, 0, 0); 
     const endOfDay = new Date(date);
     endOfDay.setUTCHours(23, 59, 59, 999);
 
-    // Fetch all bookings for the specified date that are not cancelled
+    // 🚀 Fetch all bookings (including pool bookings with person counts)
     const bookings = await Booking.find({
       date: { $gte: startOfDay, $lte: endOfDay },
       status: { $nin: ['Cancelled'] },
-      // Optional: Filter only facility types that use the common time slots
-      facilityType: { $in: ['turf', 'combo', 'pool'] } 
-    }).select('timeSlots facilityType');
+      facilityType: { $in: ['turf', 'combo', 'pool'] }
+    }).select('timeSlots facilityType additionalPlayers'); // 🚀 Added additionalPlayers
 
     res.status(200).json({
       success: true,
@@ -225,6 +296,7 @@ const getAllBookingsByDate = async (req, res) => {
       bookings
     });
   } catch (error) {
+    console.error("Get bookings by date error:", error);
     res.status(500).json({
       success: false,
       message: 'Failed to fetch bookings by date',
@@ -233,4 +305,10 @@ const getAllBookingsByDate = async (req, res) => {
   }
 };
 
-export {cancelBooking , createBooking , getBooking , getMyBookings , getAllBookingsByDate}
+export { 
+  cancelBooking, 
+  createBooking, 
+  getBooking, 
+  getMyBookings, 
+  getAllBookingsByDate 
+};
