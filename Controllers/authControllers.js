@@ -3,6 +3,7 @@ import User from "../Models/User.js"
 import jwt from "jsonwebtoken"
 import {sendRegistrationEmail} from "../Utils/emailService.js";
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+import DiscountCode from "../Models/DiscountCode.js"; // ← add this import
 
 // Generate JWT Token
 const generateToken = (id) => {
@@ -299,4 +300,118 @@ const getMe = async (req, res) => {
   }
 };
 
-export {login , register , getMe , logout , googleRegister};
+
+const validateDiscountCode = async (req, res) => {
+  try {
+    const { code, facilityType, timeSlots, additionalPlayers, basePrice } = req.body;
+    const userId = req.user._id;
+
+    if (!code) {
+      return res.status(400).json({ success: false, message: 'Code is required' });
+    }
+    if (!facilityType || !timeSlots || !basePrice) {
+      return res.status(400).json({ success: false, message: 'Booking details are required to validate a coupon' });
+    }
+
+    // ── Calculate orderAmount server-side (same logic as createBooking) ──
+    let orderAmount = 0;
+    if (facilityType === 'pool') {
+      // Pool: price per person
+      orderAmount = parseInt(basePrice) * (parseInt(additionalPlayers) || 1);
+    } else {
+      // Turf / Combo: base price per slot + ₹100 per additional player
+      const slotCount = Array.isArray(timeSlots) ? timeSlots.length : 1;
+      const additionalPlayersCost = (parseInt(additionalPlayers) || 0) * 100;
+      orderAmount = parseInt(basePrice) * slotCount + additionalPlayersCost;
+    }
+
+    if (orderAmount <= 0) {
+      return res.status(400).json({ success: false, message: 'Invalid booking amount' });
+    }
+
+    // ── Fetch and validate the discount code ──
+    const discount = await DiscountCode.findOne({ code: code.toUpperCase() });
+
+    if (!discount) {
+      return res.status(404).json({ success: false, message: 'Invalid discount code' });
+    }
+    if (!discount.isActive) {
+      return res.status(400).json({ success: false, message: 'This code is currently inactive' });
+    }
+    if (new Date(discount.expiresAt) < new Date()) {
+      return res.status(400).json({ success: false, message: 'This discount code has expired' });
+    }
+    if (discount.usedCount >= discount.maxUses) {
+      return res.status(400).json({ success: false, message: 'This code has reached its usage limit' });
+    }
+    if (discount.usedBy.map(id => id.toString()).includes(userId.toString())) {
+      return res.status(400).json({ success: false, message: 'You have already used this discount code' });
+    }
+    if (discount.minOrderAmount > 0 && orderAmount < discount.minOrderAmount) {
+      return res.status(400).json({
+        success: false,
+        message: `Minimum order amount of ₹${discount.minOrderAmount} required for this code`
+      });
+    }
+
+    // ── Calculate discount amount ──
+    let discountAmount = 0;
+    if (discount.discountType === 'percentage') {
+      discountAmount = Math.floor((orderAmount * discount.discountValue) / 100);
+    } else {
+      // flat — can't discount more than the order itself
+      discountAmount = Math.min(discount.discountValue, orderAmount);
+    }
+
+    const finalAmount = orderAmount - discountAmount;
+
+    res.status(200).json({
+      success: true,
+      discountAmount,
+      finalAmount,
+      orderAmount,        // send back so frontend can display it
+      discountType: discount.discountType,
+      discountValue: discount.discountValue,
+      message: `Code applied! You save ₹${discountAmount}`,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Failed to validate discount code',
+      error: error.message
+    });
+  }
+};
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// redeemDiscountCode — unchanged, still called after booking is confirmed
+// ─────────────────────────────────────────────────────────────────────────────
+const redeemDiscountCode = async (req, res) => {
+  try {
+    const { code } = req.body;
+    const userId = req.user._id;
+
+    if (!code) return res.status(400).json({ success: false, message: 'Code is required' });
+
+    const discount = await DiscountCode.findOne({ code: code.toUpperCase() });
+
+    if (!discount) return res.status(404).json({ success: false, message: 'Discount code not found' });
+    if (discount.usedCount >= discount.maxUses) return res.status(400).json({ success: false, message: 'Code usage limit reached' });
+    if (discount.usedBy.map(id => id.toString()).includes(userId.toString())) {
+      return res.status(400).json({ success: false, message: 'You have already used this code' });
+    }
+
+    discount.usedCount += 1;
+    discount.usedBy.push(userId);
+    await discount.save();
+
+    res.status(200).json({ success: true, message: 'Discount code redeemed successfully' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Failed to redeem discount code', error: error.message });
+  }
+};
+
+
+
+export {login , register , getMe , logout , googleRegister , validateDiscountCode , redeemDiscountCode};

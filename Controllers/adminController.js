@@ -1,7 +1,6 @@
-
-
 import Booking from "../Models/Booking.js";
 import User from "../Models/User.js";
+import DiscountCode from "../Models/DiscountCode.js"; // ← add this import
 
 // @desc    Get all bookings
 // @route   GET /api/admin/bookings
@@ -31,10 +30,8 @@ const getAllBookings = async (req, res) => {
 // @access  Private/Admin
 const getDashboardStats = async (req, res) => {
   try {
-    // Total bookings
     const totalBookings = await Booking.countDocuments();
 
-    // Monthly bookings
     const currentMonth = new Date().getMonth();
     const currentYear = new Date().getFullYear();
     const monthlyBookings = await Booking.countDocuments({
@@ -44,14 +41,12 @@ const getDashboardStats = async (req, res) => {
       }
     });
 
-    // Total revenue
     const revenueData = await Booking.aggregate([
       { $match: { status: { $ne: 'Cancelled' } } },
       { $group: { _id: null, total: { $sum: '$totalPrice' } } }
     ]);
     const totalRevenue = revenueData.length > 0 ? revenueData[0].total : 0;
 
-    // Monthly revenue
     const monthlyRevenueData = await Booking.aggregate([
       {
         $match: {
@@ -66,13 +61,11 @@ const getDashboardStats = async (req, res) => {
     ]);
     const monthlyRevenue = monthlyRevenueData.length > 0 ? monthlyRevenueData[0].total : 0;
 
-    // Bookings by facility
     const facilityStats = await Booking.aggregate([
       { $match: { status: { $ne: 'Cancelled' } } },
       { $group: { _id: '$facilityName', count: { $sum: 1 }, revenue: { $sum: '$totalPrice' } } }
     ]);
 
-    // Total users
     const totalUsers = await User.countDocuments({ role: 'user' });
 
     res.status(200).json({
@@ -131,10 +124,7 @@ const updateBookingStatus = async (req, res) => {
     const booking = await Booking.findById(req.params.id);
 
     if (!booking) {
-      return res.status(404).json({
-        success: false,
-        message: 'Booking not found'
-      });
+      return res.status(404).json({ success: false, message: 'Booking not found' });
     }
 
     booking.status = status;
@@ -175,4 +165,122 @@ const getAllUsers = async (req, res) => {
   }
 };
 
-export { getAllBookings, getDashboardStats, getBookingsByFacility, updateBookingStatus, getAllUsers };
+// ─────────────────────────────────────────────────────────────
+// DISCOUNT CODE CONTROLLERS
+// ─────────────────────────────────────────────────────────────
+
+// @desc    Get all discount codes
+// @route   GET /api/admin/discount-codes
+// @access  Private/Admin
+const getAllDiscountCodes = async (req, res) => {
+  try {
+    const codes = await DiscountCode.find().sort({ createdAt: -1 });
+    res.status(200).json({ success: true, codes });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Failed to fetch discount codes', error: error.message });
+  }
+};
+
+// @desc    Create a new discount code
+// @route   POST /api/admin/discount-codes
+// @access  Private/Admin
+const createDiscountCode = async (req, res) => {
+  try {
+    const { code, discountType, discountValue, maxUses, expiresAt, minOrderAmount, description } = req.body;
+
+    if (!code || !discountType || !discountValue || !maxUses || !expiresAt) {
+      return res.status(400).json({ success: false, message: 'All required fields must be provided' });
+    }
+    if (!['percentage', 'flat'].includes(discountType)) {
+      return res.status(400).json({ success: false, message: 'discountType must be percentage or flat' });
+    }
+    if (discountType === 'percentage' && Number(discountValue) > 100) {
+      return res.status(400).json({ success: false, message: 'Percentage discount cannot exceed 100%' });
+    }
+    if (Number(discountValue) <= 0) {
+      return res.status(400).json({ success: false, message: 'Discount value must be greater than 0' });
+    }
+    if (Number(maxUses) < 1) {
+      return res.status(400).json({ success: false, message: 'Max uses must be at least 1' });
+    }
+    if (new Date(expiresAt) <= new Date()) {
+      return res.status(400).json({ success: false, message: 'Expiry date must be in the future' });
+    }
+
+    const existing = await DiscountCode.findOne({ code: code.toUpperCase() });
+    if (existing) {
+      return res.status(400).json({ success: false, message: 'A discount code with this name already exists' });
+    }
+
+    const discount = await DiscountCode.create({
+      code: code.toUpperCase(),
+      discountType,
+      discountValue: Number(discountValue),
+      maxUses: Number(maxUses),
+      expiresAt: new Date(expiresAt),
+      minOrderAmount: Number(minOrderAmount) || 0,
+      description: description || '',
+    });
+
+    res.status(201).json({ success: true, discount });
+  } catch (error) {
+    if (error.code === 11000) {
+      return res.status(400).json({ success: false, message: 'Discount code already exists' });
+    }
+    res.status(500).json({ success: false, message: 'Failed to create discount code', error: error.message });
+  }
+};
+
+// @desc    Toggle discount code active / inactive
+// @route   PATCH /api/admin/discount-codes/:id/toggle
+// @access  Private/Admin
+const toggleDiscountCode = async (req, res) => {
+  try {
+    const { isActive } = req.body;
+
+    const code = await DiscountCode.findByIdAndUpdate(
+      req.params.id,
+      { isActive },
+      { new: true }
+    );
+
+    if (!code) {
+      return res.status(404).json({ success: false, message: 'Discount code not found' });
+    }
+
+    res.status(200).json({ success: true, code });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Failed to toggle discount code', error: error.message });
+  }
+};
+
+// @desc    Delete a discount code
+// @route   DELETE /api/admin/discount-codes/:id
+// @access  Private/Admin
+const deleteDiscountCode = async (req, res) => {
+  try {
+    const code = await DiscountCode.findByIdAndDelete(req.params.id);
+
+    if (!code) {
+      return res.status(404).json({ success: false, message: 'Discount code not found' });
+    }
+
+    res.status(200).json({ success: true, message: 'Discount code deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Failed to delete discount code', error: error.message });
+  }
+};
+
+
+export {
+  getAllBookings,
+  getDashboardStats,
+  getBookingsByFacility,
+  updateBookingStatus,
+  getAllUsers,
+  // Discount codes
+  getAllDiscountCodes,
+  createDiscountCode,
+  toggleDiscountCode,
+  deleteDiscountCode,
+};

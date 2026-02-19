@@ -28,20 +28,14 @@ const bookingSchema = new mongoose.Schema({
     type: Number,
     default: 0,
     min: [0, 'Additional players cannot be negative'],
-    max: [25, 'Maximum 25 persons allowed'], // 🚀 UPDATED: Max 25 for pool
+    max: [25, 'Maximum 25 persons allowed'],
     validate: {
-      validator: function(value) {
-        // For pool bookings, at least 1 person is required
-        if (this.facilityType === 'pool') {
-          return value >= 1 && value <= 25;
-        }
-        // For turf and combo, max 4 additional players
+      validator: function (value) {
+        if (this.facilityType === 'pool') return value >= 1 && value <= 25;
         return value >= 0 && value <= 4;
       },
       message: props => {
-        if (props.instance.facilityType === 'pool') {
-          return 'Pool bookings require 1-25 persons';
-        }
+        if (props.instance.facilityType === 'pool') return 'Pool bookings require 1-25 persons';
         return 'Additional players must be between 0-4 for turf/combo bookings';
       }
     }
@@ -54,6 +48,21 @@ const bookingSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
+
+  // ── Discount fields ──────────────────────────────────────
+  discountCode: {
+    type: String,
+    default: null,
+    uppercase: true,
+    trim: true,
+  },
+  discountAmount: {
+    type: Number,
+    default: 0,
+    min: 0,
+  },
+  // ────────────────────────────────────────────────────────
+
   totalPrice: {
     type: Number,
     required: true
@@ -72,10 +81,8 @@ const bookingSchema = new mongoose.Schema({
   timestamps: true
 });
 
-// Index for faster queries
 bookingSchema.index({ user: 1, date: 1 });
 bookingSchema.index({ facilityName: 1, date: 1 });
-// 🚀 NEW: Index for pool capacity queries
 bookingSchema.index({ facilityType: 1, date: 1, timeSlots: 1 });
 
 const Booking = mongoose.model('Booking', bookingSchema);
